@@ -3,9 +3,9 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"strconv"
-	"strings"
+//	"strings"
+//	"os"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
@@ -66,29 +66,44 @@ func NewBlockParserCmd() *cobra.Command {
 				fmt.Println(endHeight, "is not available, Latest Height : ", blockStore.Height())
 				return nil
 			}
+			
+//			f, err := os.OpenFile(fmt.Sprintf("block-%d-%d.json",startHeight,endHeight), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+//			if err != nil {
+//	    			panic(err)
+//			}
+//			defer f.Close()
+
 
 			blockList := []string{}
 			//validatorList := []string{}
-			for i := startHeight; i < endHeight; i++ {
-				if i%10000 == 0 {
-					fmt.Println(i)
-				}
+			for i := startHeight; i <= endHeight; i++ {
 				b, err := json.Marshal(blockStore.LoadBlockCommit(i))
 				if err != nil {
 					panic(err)
 				}
 				blockList = append(blockList, string(b))
+				print(blockStore.LoadBlockCommit(i))
 
+//				if i%10000 == 0 {
+//					blockOutput := strings.Join(blockList, "\n")
+//					if _, err := f.WriteString(blockOutput); err != nil {
+//						panic(err)
+//					}
+//					blockList = nil
+//				}
 			}
-			blockOutput := strings.Join(blockList, "\n")
 
-			err = ioutil.WriteFile(fmt.Sprintf("blocks-%d-%d.json", startHeight, endHeight), []byte(blockOutput), 0644)
-			if err != nil {
-				panic(err)
-			}
+//			blockOutput := strings.Join(blockList, "\n")
+//			if _, err := f.WriteString(blockOutput); err != nil {
+//				panic(err)
+//			}
+			
+
 			fmt.Println("Done! check the output files on current dir")
 			return nil
 		},
 	}
 	return cmd
 }
+
+
