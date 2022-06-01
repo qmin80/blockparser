@@ -2,17 +2,55 @@ package cmd
 
 import (
 	"encoding/json"
+	"encoding/csv"
 	"fmt"
 	"strconv"
-//	"strings"
-//	"os"
+	"time"
+	"os"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
 	"github.com/tendermint/tendermint/store"
 )
 
+type BlockCommit struct {
+	Height  int `json:"height"`
+	Round   int `json:"round"`
+	BlockID struct {
+		Hash  string `json:"hash"`
+		Parts struct {
+			Total int    `json:"total"`
+			Hash  string `json:"hash"`
+		} `json:"parts"`
+	} `json:"block_id"`
+	Signatures []struct {
+		BlockIDFlag      int       `json:"block_id_flag"`
+		ValidatorAddress string    `json:"validator_address"`
+		Timestamp        time.Time `json:"timestamp"`
+		Signature        string    `json:"signature"`
+	} `json:"signatures"`
+}
+
+type ValidatorCommitInfo struct {
+	ValidatorAddress string    `json:"validator_address"`
+	SlotCount  int `json:"slot_count"`
+	CommitInfos	[]CommitInfo    `json:"commit_infos"`
+}
+
+type CommitInfo struct {
+	Slot  int `json:"slot"`
+	StartHeight  int64 `json:"start_height"`
+	EndHeight  int64 `json:"end_height"`
+	CommitCount   int64 `json:"commit_count"`
+} 
+
+type EmptyCommit struct {
+	Slot	int `json:"slot"`	
+	Heights  []int64 `json:"height"`	
+}
+
 func NewBlockParserCmd() *cobra.Command {
+
 	cmd := &cobra.Command{
 		Use:  "blockparser [chain-dir] [start-height] [end-height]",
 		Args: cobra.ExactArgs(3),
@@ -66,44 +104,120 @@ func NewBlockParserCmd() *cobra.Command {
 				fmt.Println(endHeight, "is not available, Latest Height : ", blockStore.Height())
 				return nil
 			}
-			
-//			f, err := os.OpenFile(fmt.Sprintf("block-%d-%d.json",startHeight,endHeight), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-//			if err != nil {
-//	    			panic(err)
-//			}
-//			defer f.Close()
 
+			validatorMap := make(map[string]*ValidatorCommitInfo)
+			emptyCommitMap := make(map[int]*EmptyCommit)
 
-			blockList := []string{}
-			//validatorList := []string{}
 			for i := startHeight; i <= endHeight; i++ {
 				b, err := json.Marshal(blockStore.LoadBlockCommit(i))
 				if err != nil {
 					panic(err)
 				}
-				blockList = append(blockList, string(b))
-				print(blockStore.LoadBlockCommit(i))
 
-//				if i%10000 == 0 {
-//					blockOutput := strings.Join(blockList, "\n")
-//					if _, err := f.WriteString(blockOutput); err != nil {
-//						panic(err)
-//					}
-//					blockList = nil
-//				}
+				jsonString := string(b)
+				var blockCommit = BlockCommit{}
+				json.Unmarshal([]byte(jsonString), &blockCommit)
+
+				for slot, item := range blockCommit.Signatures {
+					
+					// if no signature in the slot
+					if item.ValidatorAddress == "" {
+						
+						_, ok := emptyCommitMap[slot]
+						if !ok {
+							emptyCommit := EmptyCommit{
+								Slot: slot,
+							}							
+							emptyCommitMap[slot] = &emptyCommit
+						} 
+						
+						emptyCommit := emptyCommitMap[slot]
+						emptyCommit.Heights = append(emptyCommit.Heights, i)
+
+						continue
+					}
+					
+					_, ok := validatorMap[item.ValidatorAddress]
+					if !ok {
+						validatorCommitInfo := ValidatorCommitInfo{
+							ValidatorAddress: item.ValidatorAddress, 
+							SlotCount: 1,
+						}
+						
+						validatorCommitInfo.CommitInfos = append(validatorCommitInfo.CommitInfos, CommitInfo{
+							Slot: slot,
+							StartHeight: i,
+							EndHeight: i,
+							CommitCount: 1,
+						})
+
+						validatorMap[item.ValidatorAddress] = &validatorCommitInfo
+					} else {
+						validatorCommitInfo := validatorMap[item.ValidatorAddress]
+						slotCount := validatorCommitInfo.SlotCount 
+						
+						if slot == validatorCommitInfo.CommitInfos[slotCount-1].Slot {
+							validatorCommitInfo.CommitInfos[slotCount-1].CommitCount++
+							validatorCommitInfo.CommitInfos[slotCount-1].EndHeight = i
+						} else {
+							validatorCommitInfo.CommitInfos = append(validatorCommitInfo.CommitInfos, CommitInfo{
+								Slot: slot,
+								StartHeight: i,
+								EndHeight: i,
+								CommitCount: 1,
+							})							
+							validatorCommitInfo.SlotCount++
+						}
+					}
+				}
 			}
-
-//			blockOutput := strings.Join(blockList, "\n")
-//			if _, err := f.WriteString(blockOutput); err != nil {
-//				panic(err)
-//			}
 			
+			outputFile, _ := os.OpenFile(fmt.Sprintf("data-%d-%d.csv",startHeight, endHeight), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+			defer outputFile.Close()
+				
+			writer := csv.NewWriter(outputFile)
+			output := []string{
+					"Validator Address", "Slot Count", "Slot", "Start Height", "End Height", "Commit Count", "Block Count", "Missed Commit",
+				}
+			writeFile(writer, output, outputFile.Name())
 
-			fmt.Println("Done! check the output files on current dir")
+			for _, v := range validatorMap {
+
+				for _, cv := range v.CommitInfos {
+					
+					blockCount := cv.EndHeight - cv.StartHeight
+					missedCommit := blockCount - cv.CommitCount
+					
+					output := []string{
+						v.ValidatorAddress,
+						fmt.Sprint(v.SlotCount),
+						fmt.Sprint(cv.Slot),
+						fmt.Sprint(cv.StartHeight),
+						fmt.Sprint(cv.EndHeight),
+						fmt.Sprint(cv.CommitCount),
+						fmt.Sprint(blockCount),
+						fmt.Sprint(missedCommit),
+					}
+
+					writeFile(writer, output, outputFile.Name())
+				}
+			}
+			
+			fmt.Println("Done! check the output files on current dir : ", outputFile.Name())
 			return nil
 		},
 	}
 	return cmd
 }
 
+func writeFile(w *csv.Writer, result []string, fileName string) {
+	if err := w.Write(result); err != nil {
+		return
+	}
+	w.Flush()
+
+	if err := w.Error(); err != nil {
+		return
+	}
+}
 
