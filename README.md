@@ -14,9 +14,12 @@ go build
 ```bash
 # Usage : blockparser [chain-dir] [start-height] [end-height]
 blockparser ~/.crescent 402001 432001
+
+# Usage : blockparser [rpc-url] [start-height] [end-height]
+blockparser https://mainnet.crescent.network:26657 402001 432001
 ```
 
-output 
+output : blockparser
 ```
 Loaded :  /Users/guest/.crescent/data/
 Input Start Height : 402001
@@ -25,8 +28,17 @@ Latest Height : 475830
 410000
 420000
 430000
-Done! check the output files on current dir
+Done! check the output files on current dir : data-402001-432001.csv
 ```
+
+output : rpcparser 
+```
+RPC URL :  https://rpc-juno-archive.cosmoapi.com
+Input Start Height : 3100001
+Input End Height : 3100101
+Done! check the output files on current dir :  data-3100001-3100101.csv
+```
+
 
 ## 
 ```
