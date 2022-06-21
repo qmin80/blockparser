@@ -39,6 +39,12 @@ type ValidatorCommitInfo struct {
 	CommitInfos	[]CommitInfo    `json:"commit_infos"`
 }
 
+type ProposerInfo struct {
+	Height  int64 `json:"height"`
+	ProposerAddress string    `json:"proposer_address"`
+	TxCount  int `json:"tx_count"`
+}
+
 type CommitInfo struct {
 	Slot  int `json:"slot"`
 	StartHeight  int64 `json:"start_height"`
@@ -172,8 +178,17 @@ func BlockParserCmd() *cobra.Command {
 
 			validatorMap := make(map[string]*ValidatorCommitInfo)
 			emptyCommitMap := make(map[int]*EmptyCommit)
+			proposerMap := make(map[int]*ProposerInfo)
 
 			for i := startHeight; i <= endHeight; i++ {
+
+				block := blockStore.LoadBlock(i)
+				proposerInfo := ProposerInfo{
+					Height: i,
+					ProposerAddress: fmt.Sprint(block.ProposerAddress),
+					TxCount: len(block.Txs),
+				}
+				proposerMap[int(i)] = &proposerInfo
 				
 				b, err := json.Marshal(blockStore.LoadBlockCommit(i))
 				if err != nil {
@@ -237,7 +252,30 @@ func BlockParserCmd() *cobra.Command {
 					}
 				}
 			}
+
+			outputProposerFile, _ := os.OpenFile(fmt.Sprintf("proposer-%d-%d.csv",startHeight, endHeight), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+			defer outputProposerFile.Close()
 			
+			writerProposer := csv.NewWriter(outputProposerFile)
+			outputProposer := []string{
+					"Height", "Proposer Address", "TX Count",
+				}
+			writeFile(writerProposer, outputProposer, outputProposerFile.Name())
+
+			for _, p := range proposerMap {
+
+				outputProposer := []string{
+					fmt.Sprint(p.Height),
+					fmt.Sprint(p.ProposerAddress),
+					fmt.Sprint(p.TxCount),
+				}
+
+				writeFile(writerProposer, outputProposer, outputProposerFile.Name())
+			}
+			
+			fmt.Println("Done! check the output files on current dir : ", outputProposerFile.Name())
+
+
 			outputFile, _ := os.OpenFile(fmt.Sprintf("data-%d-%d.csv",startHeight, endHeight), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 			defer outputFile.Close()
 				
