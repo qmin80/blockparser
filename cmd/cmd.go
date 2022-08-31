@@ -1,14 +1,14 @@
 package cmd
 
 import (
-	"encoding/json"
 	"encoding/csv"
-	"net/http"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"net/http"
+	"os"
 	"strconv"
 	"time"
-	"os"
-	"io/ioutil"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
@@ -34,27 +34,33 @@ type BlockCommit struct {
 }
 
 type ValidatorCommitInfo struct {
-	ValidatorAddress string    `json:"validator_address"`
-	SlotCount  int `json:"slot_count"`
-	CommitInfos	[]CommitInfo    `json:"commit_infos"`
+	ValidatorAddress string       `json:"validator_address"`
+	SlotCount        int          `json:"slot_count"`
+	CommitInfos      []CommitInfo `json:"commit_infos"`
 }
 
 type ProposerInfo struct {
-	Height  int64 `json:"height"`
-	ProposerAddress string    `json:"proposer_address"`
-	TxCount  int `json:"tx_count"`
+	Height          int64  `json:"height"`
+	ProposerAddress string `json:"proposer_address"`
+	TxCount         int    `json:"tx_count"`
+}
+
+type ProposerTxInfo struct {
+	ProposerAddress string `json:"proposer_address"`
+	ProposingCount  int    `json:"proposer_count"`
+	TxCount         int    `json:"tx_count"`
 }
 
 type CommitInfo struct {
-	Slot  int `json:"slot"`
-	StartHeight  int64 `json:"start_height"`
-	EndHeight  int64 `json:"end_height"`
-	CommitCount   int64 `json:"commit_count"`
-} 
+	Slot        int   `json:"slot"`
+	StartHeight int64 `json:"start_height"`
+	EndHeight   int64 `json:"end_height"`
+	CommitCount int64 `json:"commit_count"`
+}
 
 type EmptyCommit struct {
-	Slot	int `json:"slot"`	
-	Heights  []int64 `json:"height"`	
+	Slot    int     `json:"slot"`
+	Heights []int64 `json:"height"`
 }
 
 type RPCBlockData struct {
@@ -179,17 +185,30 @@ func BlockParserCmd() *cobra.Command {
 			validatorMap := make(map[string]*ValidatorCommitInfo)
 			emptyCommitMap := make(map[int]*EmptyCommit)
 			proposerMap := make(map[int]*ProposerInfo)
+			proposerTxMap := make(map[string]*ProposerTxInfo)
 
 			for i := startHeight; i <= endHeight; i++ {
 
 				block := blockStore.LoadBlock(i)
 				proposerInfo := ProposerInfo{
-					Height: i,
+					Height:          i,
 					ProposerAddress: fmt.Sprint(block.ProposerAddress),
-					TxCount: len(block.Txs),
+					TxCount:         len(block.Txs),
 				}
 				proposerMap[int(i)] = &proposerInfo
-				
+
+				if _, ok := proposerTxMap[proposerInfo.ProposerAddress]; ok {
+					proposerTxMap[proposerInfo.ProposerAddress].ProposingCount += 1
+					proposerTxMap[proposerInfo.ProposerAddress].TxCount += proposerInfo.TxCount
+				} else {
+					proposerTxInfo := ProposerTxInfo{
+						ProposerAddress: proposerInfo.ProposerAddress,
+						ProposingCount:  1,
+						TxCount:         proposerInfo.TxCount,
+					}
+					proposerTxMap[proposerInfo.ProposerAddress] = &proposerTxInfo
+				}
+
 				b, err := json.Marshal(blockStore.LoadBlockCommit(i))
 				if err != nil {
 					panic(err)
@@ -200,66 +219,66 @@ func BlockParserCmd() *cobra.Command {
 				json.Unmarshal([]byte(jsonString), &blockCommit)
 
 				for slot, item := range blockCommit.Signatures {
-					
+
 					// if no signature in the slot
 					if item.ValidatorAddress == "" {
-						
+
 						_, ok := emptyCommitMap[slot]
 						if !ok {
 							emptyCommit := EmptyCommit{
 								Slot: slot,
-							}							
+							}
 							emptyCommitMap[slot] = &emptyCommit
-						} 
-						
+						}
+
 						emptyCommit := emptyCommitMap[slot]
 						emptyCommit.Heights = append(emptyCommit.Heights, i)
 
 						continue
 					}
-					
+
 					_, ok := validatorMap[item.ValidatorAddress]
 					if !ok {
 						validatorCommitInfo := ValidatorCommitInfo{
-							ValidatorAddress: item.ValidatorAddress, 
-							SlotCount: 1,
+							ValidatorAddress: item.ValidatorAddress,
+							SlotCount:        1,
 						}
-						
+
 						validatorCommitInfo.CommitInfos = append(validatorCommitInfo.CommitInfos, CommitInfo{
-							Slot: slot,
+							Slot:        slot,
 							StartHeight: i,
-							EndHeight: i,
+							EndHeight:   i,
 							CommitCount: 1,
 						})
 
 						validatorMap[item.ValidatorAddress] = &validatorCommitInfo
 					} else {
 						validatorCommitInfo := validatorMap[item.ValidatorAddress]
-						slotCount := validatorCommitInfo.SlotCount 
-						
+						slotCount := validatorCommitInfo.SlotCount
+
 						if slot == validatorCommitInfo.CommitInfos[slotCount-1].Slot {
 							validatorCommitInfo.CommitInfos[slotCount-1].CommitCount++
 							validatorCommitInfo.CommitInfos[slotCount-1].EndHeight = i
 						} else {
 							validatorCommitInfo.CommitInfos = append(validatorCommitInfo.CommitInfos, CommitInfo{
-								Slot: slot,
+								Slot:        slot,
 								StartHeight: i,
-								EndHeight: i,
+								EndHeight:   i,
 								CommitCount: 1,
-							})							
+							})
 							validatorCommitInfo.SlotCount++
 						}
 					}
 				}
 			}
 
-			outputProposerFile, _ := os.OpenFile(fmt.Sprintf("proposer-%d-%d.csv",startHeight, endHeight), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+			outputProposerFile, _ := os.OpenFile(fmt.Sprintf("proposer-%d-%d.csv", startHeight, endHeight), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 			defer outputProposerFile.Close()
-			
+
 			writerProposer := csv.NewWriter(outputProposerFile)
 			outputProposer := []string{
-					"Height", "Proposer Address", "TX Count",
-				}
+				"Height", "Proposer Address", "TX Count",
+			}
 			writeFile(writerProposer, outputProposer, outputProposerFile.Name())
 
 			for _, p := range proposerMap {
@@ -272,26 +291,48 @@ func BlockParserCmd() *cobra.Command {
 
 				writeFile(writerProposer, outputProposer, outputProposerFile.Name())
 			}
-			
+
 			fmt.Println("Done! check the output files on current dir : ", outputProposerFile.Name())
 
+			// proposerTxMap
+			outputProposerTxFile, _ := os.OpenFile(fmt.Sprintf("proposer-tx-%d-%d.csv", startHeight, endHeight), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+			defer outputProposerFile.Close()
 
-			outputFile, _ := os.OpenFile(fmt.Sprintf("data-%d-%d.csv",startHeight, endHeight), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+			writerProposerTx := csv.NewWriter(outputProposerTxFile)
+			outputProposerTx := []string{
+				"Proposer Address", "Proposing Count", "TX Count",
+			}
+			writeFile(writerProposerTx, outputProposerTx, outputProposerTxFile.Name())
+
+			for _, p := range proposerTxMap {
+
+				outputProposerTx := []string{
+					fmt.Sprint(p.ProposerAddress),
+					fmt.Sprint(p.ProposingCount),
+					fmt.Sprint(p.TxCount),
+				}
+
+				writeFile(writerProposerTx, outputProposerTx, outputProposerTxFile.Name())
+			}
+
+			fmt.Println("Done! check the output files on current dir : ", outputProposerTxFile.Name())
+
+			outputFile, _ := os.OpenFile(fmt.Sprintf("data-%d-%d.csv", startHeight, endHeight), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 			defer outputFile.Close()
-				
+
 			writer := csv.NewWriter(outputFile)
 			output := []string{
-					"Validator Address", "Slot Count", "Slot", "Start Height", "End Height", "Commit Count", "Block Count", "Missed Commit",
-				}
+				"Validator Address", "Slot Count", "Slot", "Start Height", "End Height", "Commit Count", "Block Count", "Missed Commit",
+			}
 			writeFile(writer, output, outputFile.Name())
 
 			for _, v := range validatorMap {
 
 				for _, cv := range v.CommitInfos {
-					
+
 					blockCount := cv.EndHeight - cv.StartHeight
 					missedCommit := blockCount - cv.CommitCount
-					
+
 					output := []string{
 						v.ValidatorAddress,
 						fmt.Sprint(v.SlotCount),
@@ -306,7 +347,7 @@ func BlockParserCmd() *cobra.Command {
 					writeFile(writer, output, outputFile.Name())
 				}
 			}
-			
+
 			fmt.Println("Done! check the output files on current dir : ", outputFile.Name())
 			return nil
 		},
@@ -314,10 +355,9 @@ func BlockParserCmd() *cobra.Command {
 	return cmd
 }
 
-
-// RPCParserCmd 
+// RPCParserCmd
 // go run main.go https://rpc-juno-old-archive.cosmoapi.com 2017467 2578097
-// Total 560,000 blocks 
+// Total 560,000 blocks
 // Throughput 120,000 blocks/h
 // Estimation 4.6 hours
 func RPCParserCmd() *cobra.Command {
@@ -338,7 +378,7 @@ func RPCParserCmd() *cobra.Command {
 			}
 
 			rpcUrl := args[0]
-			
+
 			fmt.Println("RPC URL : ", rpcUrl)
 			fmt.Println("Input Start Height :", startHeight)
 			fmt.Println("Input End Height :", endHeight)
@@ -347,8 +387,8 @@ func RPCParserCmd() *cobra.Command {
 			emptyCommitMap := make(map[int]*EmptyCommit)
 
 			for i := startHeight; i <= endHeight; i++ {
-				if i % 10000 == 0 {
-					t := time.Now() 
+				if i%10000 == 0 {
+					t := time.Now()
 					fmt.Println(i, " - ", t)
 				}
 
@@ -359,12 +399,12 @@ func RPCParserCmd() *cobra.Command {
 				}
 
 				body, err := ioutil.ReadAll(res.Body)
-					if err != nil {
+				if err != nil {
 					panic(err)
 				}
-				
+
 				jsonString := string(body)
-								
+
 				rpcBlockData := RPCBlockData{}
 				json.Unmarshal([]byte(jsonString), &rpcBlockData)
 
@@ -372,75 +412,75 @@ func RPCParserCmd() *cobra.Command {
 				// fmt.Println(*blockCommit)
 
 				for slot, item := range blockCommit.Signatures {
-					
+
 					// if no signature in the slot
 					if item.ValidatorAddress == "" {
-						
+
 						_, ok := emptyCommitMap[slot]
 						if !ok {
 							emptyCommit := EmptyCommit{
 								Slot: slot,
-							}							
+							}
 							emptyCommitMap[slot] = &emptyCommit
-						} 
-						
+						}
+
 						emptyCommit := emptyCommitMap[slot]
 						emptyCommit.Heights = append(emptyCommit.Heights, i)
 
 						continue
 					}
-					
+
 					_, ok := validatorMap[item.ValidatorAddress]
 					if !ok {
 						validatorCommitInfo := ValidatorCommitInfo{
-							ValidatorAddress: item.ValidatorAddress, 
-							SlotCount: 1,
+							ValidatorAddress: item.ValidatorAddress,
+							SlotCount:        1,
 						}
-						
+
 						validatorCommitInfo.CommitInfos = append(validatorCommitInfo.CommitInfos, CommitInfo{
-							Slot: slot,
+							Slot:        slot,
 							StartHeight: i,
-							EndHeight: i,
+							EndHeight:   i,
 							CommitCount: 1,
 						})
 
 						validatorMap[item.ValidatorAddress] = &validatorCommitInfo
 					} else {
 						validatorCommitInfo := validatorMap[item.ValidatorAddress]
-						slotCount := validatorCommitInfo.SlotCount 
-						
+						slotCount := validatorCommitInfo.SlotCount
+
 						if slot == validatorCommitInfo.CommitInfos[slotCount-1].Slot {
 							validatorCommitInfo.CommitInfos[slotCount-1].CommitCount++
 							validatorCommitInfo.CommitInfos[slotCount-1].EndHeight = i
 						} else {
 							validatorCommitInfo.CommitInfos = append(validatorCommitInfo.CommitInfos, CommitInfo{
-								Slot: slot,
+								Slot:        slot,
 								StartHeight: i,
-								EndHeight: i,
+								EndHeight:   i,
 								CommitCount: 1,
-							})							
+							})
 							validatorCommitInfo.SlotCount++
 						}
 					}
 				}
 			}
-			
-			outputFile, _ := os.OpenFile(fmt.Sprintf("data-%d-%d.csv",startHeight, endHeight), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+
+			outputFile, _ := os.OpenFile(fmt.Sprintf("data-%d-%d.csv", startHeight, endHeight), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 			defer outputFile.Close()
-				
+
 			writer := csv.NewWriter(outputFile)
 			output := []string{
-					"Validator Address", "Slot Count", "Slot", "Start Height", "End Height", "Commit Count", "Block Count", "Missed Commit",
-				}
+				"Validator Address", "Slot Count", "Slot", "Start Height", "End Height", "Commit Count", "Block Count", "Missed Commit",
+			}
 			writeFile(writer, output, outputFile.Name())
 
 			for _, v := range validatorMap {
 
 				for _, cv := range v.CommitInfos {
-					
+
 					blockCount := cv.EndHeight - cv.StartHeight
 					missedCommit := blockCount - cv.CommitCount
-					
+
 					output := []string{
 						v.ValidatorAddress,
 						fmt.Sprint(v.SlotCount),
@@ -455,14 +495,13 @@ func RPCParserCmd() *cobra.Command {
 					writeFile(writer, output, outputFile.Name())
 				}
 			}
-			
+
 			fmt.Println("Done! check the output files on current dir : ", outputFile.Name())
 			return nil
 		},
 	}
 	return cmd
 }
-
 
 func writeFile(w *csv.Writer, result []string, fileName string) {
 	if err := w.Write(result); err != nil {
