@@ -9,123 +9,72 @@ import (
 	"os"
 	"strconv"
 	"time"
+	"strings"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
 	"github.com/tendermint/tendermint/store"
 )
 
-type BlockCommit struct {
-	Height  int `json:"height"`
-	Round   int `json:"round"`
-	BlockID struct {
-		Hash  string `json:"hash"`
-		Parts struct {
-			Total int    `json:"total"`
-			Hash  string `json:"hash"`
-		} `json:"parts"`
-	} `json:"block_id"`
-	Signatures []struct {
-		BlockIDFlag      int       `json:"block_id_flag"`
-		ValidatorAddress string    `json:"validator_address"`
-		Timestamp        time.Time `json:"timestamp"`
-		Signature        string    `json:"signature"`
-	} `json:"signatures"`
-}
+func ConsensusParserCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:  "blockparser consensus [rpc url]",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
 
-type ValidatorCommitInfo struct {
-	ValidatorAddress string       `json:"validator_address"`
-	SlotCount        int          `json:"slot_count"`
-	CommitInfos      []CommitInfo `json:"commit_infos"`
-}
+			rpcUrl := args[1]
 
-type ProposerInfo struct {
-	Height          int64  `json:"height"`
-	ProposerAddress string `json:"proposer_address"`
-	TxCount         int    `json:"tx_count"`
-}
+			fmt.Println("RPC URL : ", rpcUrl)
 
-type ProposerTxInfo struct {
-	ProposerAddress string `json:"proposer_address"`
-	ProposingCount  int    `json:"proposer_count"`
-	TxCount         int    `json:"tx_count"`
-}
+			res, err := http.Get(rpcUrl)
+			if err != nil {
+				panic(err)
+			}
 
-type CommitInfo struct {
-	Slot        int   `json:"slot"`
-	StartHeight int64 `json:"start_height"`
-	EndHeight   int64 `json:"end_height"`
-	CommitCount int64 `json:"commit_count"`
-}
+			body, err := ioutil.ReadAll(res.Body)
+			if err != nil {
+				panic(err)
+			}
 
-type EmptyCommit struct {
-	Slot    int     `json:"slot"`
-	Heights []int64 `json:"height"`
-}
+			jsonString := string(body)
 
-type RPCBlockData struct {
-	Jsonrpc string `json:"jsonrpc"`
-	ID      int    `json:"id"`
-	Result  struct {
-		BlockID struct {
-			Hash  string `json:"hash"`
-			Parts struct {
-				Total int    `json:"total"`
-				Hash  string `json:"hash"`
-			} `json:"parts"`
-		} `json:"block_id"`
-		Block struct {
-			Header struct {
-				Version struct {
-					Block string `json:"block"`
-				} `json:"version"`
-				ChainID     string    `json:"chain_id"`
-				Height      string    `json:"height"`
-				Time        time.Time `json:"time"`
-				LastBlockID struct {
-					Hash  string `json:"hash"`
-					Parts struct {
-						Total int    `json:"total"`
-						Hash  string `json:"hash"`
-					} `json:"parts"`
-				} `json:"last_block_id"`
-				LastCommitHash     string `json:"last_commit_hash"`
-				DataHash           string `json:"data_hash"`
-				ValidatorsHash     string `json:"validators_hash"`
-				NextValidatorsHash string `json:"next_validators_hash"`
-				ConsensusHash      string `json:"consensus_hash"`
-				AppHash            string `json:"app_hash"`
-				LastResultsHash    string `json:"last_results_hash"`
-				EvidenceHash       string `json:"evidence_hash"`
-				ProposerAddress    string `json:"proposer_address"`
-			} `json:"header"`
-			Data struct {
-				Txs []string `json:"txs"`
-			} `json:"data"`
-			Evidence struct {
-				Evidence []interface{} `json:"evidence"`
-			} `json:"evidence"`
-			LastCommit struct {
-				Height  string `json:"height"`
-				Round   int    `json:"round"`
-				BlockID struct {
-					Hash  string `json:"hash"`
-					Parts struct {
-						Total int    `json:"total"`
-						Hash  string `json:"hash"`
-					} `json:"parts"`
-				} `json:"block_id"`
-				Signatures []struct {
-					BlockIDFlag      int       `json:"block_id_flag"`
-					ValidatorAddress string    `json:"validator_address"`
-					Timestamp        time.Time `json:"timestamp"`
-					Signature        string    `json:"signature"`
-				} `json:"signatures"`
-			} `json:"last_commit"`
-		} `json:"block"`
-	} `json:"result"`
-}
+			consensusStateData := ConsensusStateInfo{}
+			json.Unmarshal([]byte(jsonString), &consensusStateData)
+			
+			var lastesIndex int = len(consensusStateData.Result.RoundState.HeightVoteSet) - 2
+			fmt.Println(consensusStateData.Result.RoundState.HeightVoteSet[lastesIndex].Round)
+			
+			prevoteMap := make(map[string]int)
 
+			for _, item := range consensusStateData.Result.RoundState.HeightVoteSet[lastesIndex].Prevotes {
+				
+				var key string = ""
+				if item == "nil-Vote" {
+					key = "nil-Vote"
+			
+				} else {
+					s := strings.Split(item, " ")
+					key = s[2]
+				}
+
+				fmt.Println(key)
+				_, ok := prevoteMap[key]
+				if !ok {
+					prevoteMap[key] = 1
+				} else {
+					prevoteMap[key] += 1
+				}		
+			}
+
+			for key, value := range prevoteMap {
+				fmt.Println(key, value)
+			}
+
+			return nil
+		},
+	}
+	return cmd
+}
 func BlockParserCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
@@ -363,21 +312,21 @@ func BlockParserCmd() *cobra.Command {
 func RPCParserCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
-		Use:  "blockparser [rpc url] [start-height] [end-height]",
-		Args: cobra.ExactArgs(3),
+		Use:  "blockparser rpc [rpc url] [start-height] [end-height]",
+		Args: cobra.ExactArgs(4),
 		RunE: func(cmd *cobra.Command, args []string) error {
 
-			startHeight, err := strconv.ParseInt(args[1], 10, 64)
+			startHeight, err := strconv.ParseInt(args[2], 10, 64)
 			if err != nil {
 				return fmt.Errorf("parse start-Height: %w", err)
 			}
 
-			endHeight, err := strconv.ParseInt(args[2], 10, 64)
+			endHeight, err := strconv.ParseInt(args[3], 10, 64)
 			if err != nil {
 				return fmt.Errorf("parse end-Height: %w", err)
 			}
 
-			rpcUrl := args[0]
+			rpcUrl := args[1]
 
 			fmt.Println("RPC URL : ", rpcUrl)
 			fmt.Println("Input Start Height :", startHeight)
