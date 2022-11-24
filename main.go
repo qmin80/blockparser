@@ -16,6 +16,10 @@ func main() {
 		if err := cmd.ConsensusParserCmd().Execute(); err != nil {
 			os.Exit(1)
 		}
+	} else if strings.HasPrefix(os.Args[1], "pebble") {
+		if err := cmd.PebbleBlockParserCmd().Execute(); err != nil {
+			os.Exit(1)
+		}
 	} else {
 		if err := cmd.BlockParserCmd().Execute(); err != nil {
 			os.Exit(1)
