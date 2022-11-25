@@ -1,12 +1,8 @@
 package cmd
 
-
 import (
-
 	"time"
-
 )
-
 
 type ConsensusStateInfo struct {
 	Jsonrpc string `json:"jsonrpc"`
