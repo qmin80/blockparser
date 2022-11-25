@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"strings"
+
 	"github.com/cosmosquad-labs/blockparser/cmd"
 )
 
@@ -14,10 +15,6 @@ func main() {
 		}
 	} else if strings.HasPrefix(os.Args[1], "consensus") {
 		if err := cmd.ConsensusParserCmd().Execute(); err != nil {
-			os.Exit(1)
-		}
-	} else if strings.HasPrefix(os.Args[1], "pebble") {
-		if err := cmd.PebbleBlockParserCmd().Execute(); err != nil {
 			os.Exit(1)
 		}
 	} else {
